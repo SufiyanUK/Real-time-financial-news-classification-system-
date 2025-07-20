@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:alpine
+    container_name: redis
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+    ports:
+      - 6379:6379
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    labels:
+      - "version=latest"
+      - "description=Redis for caching"
+      - "type=caching"
+    networks:
+      - dashboard
+      - monitoring
+
+  mongo:
+    image: mongo:latest
+    container_name: mongo
+    restart: always
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=mongo
+      - MONGO_INITDB_ROOT_PASSWORD=mongo
+    ports:
+      - 27017:27017
+    healthcheck:
+      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    labels:
+      - "version=1.0.0"
+      - "description=MongoDB NoSQL main database"
+      - "type=database"
+    networks:
+      - dashboard
+      - monitoring
+
+  web:
+    build: .
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis
+    ports:
+      - 8000:8000
+    command: uvicorn app.main:app --host 0.0.0.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    labels:
+      - "version=0.1.2"
+      - "description=AINewsTracker"
+      - "type=api"
+    networks:
+      - dashboard
+      - monitoring
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - 9090:9090
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    networks:
+      - monitoring
+    depends_on:
+      - web
+
+networks:
+  dashboard:
+    name: dashboard
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.16.0.0/24
+  monitoring:
+    driver: bridge

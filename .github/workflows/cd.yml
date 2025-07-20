@@ -1,0 +1,68 @@
+name: Python application CD
+
+on:
+  release:
+    types:
+      - created
+
+env:
+  FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+  BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
+  BINANCE_API_SECRET_KEY: ${{ secrets.BINANCE_API_SECRET_KEY }}
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (GitHub)
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10.12"
+
+      - uses: Jimver/cuda-toolkit@v0.2.11
+        id: cuda-toolkit
+        with:
+          cuda: "12.1.0"
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pypoetry
+          key: ${{ runner.os }}-poetry-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Run poetry
+        uses: abatilo/actions-poetry@v2
+        with:
+          poetry-version: "1.5.0"
+
+      - name: Install dependencies
+        run: |
+          poetry install
+          poetry lock
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build, push, and deploy Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: user/app:latest
+
+      - name: SSH and Docker Compose Up
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.PRODUCTION_SERVER_HOST }}
+          username: ${{ secrets.PRODUCTION_SERVER_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.PRODUCTION_SERVER_PORT }}
+          script: |
+            docker pull user/app:latest
+            docker-compose up -d

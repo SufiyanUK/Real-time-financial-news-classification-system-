@@ -1,0 +1,103 @@
+name: Python application CI
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "**"
+      - "!.github/**"
+      - "!scripts/"
+      - "scripts/install_cuda_ubuntu.sh"
+      - "!*.md"
+  push:
+    branches: ["main"]
+    paths:
+      - "**"
+      - "!.github/**"
+      - "!scripts/"
+      - "scripts/install_cuda_ubuntu.sh"
+      - "!*.md"
+
+env:
+  FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+  BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
+  BINANCE_API_SECRET_KEY: ${{ secrets.BINANCE_API_SECRET_KEY }}
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (GitHub)
+        uses: actions/checkout@v3
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc build-essential zlib1g-dev libncurses5-dev libgdbm-dev libnss3-dev libssl-dev libreadline-dev libffi-dev libbz2-dev
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10.12"
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pypoetry
+          key: ${{ runner.os }}-poetry-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Run poetry
+        uses: abatilo/actions-poetry@v2
+        with:
+          poetry-version: "1.5.1"
+
+      - name: Install CUDA
+        env:
+          cuda: "12.0"
+        run: chmod +x ./scriptsinstall_cuda_ubuntu.sh && ./scripts/install_cuda_ubuntu.sh
+        shell: bash
+
+      - name: Install dependencies
+        run: |
+          poetry install
+          poetry lock
+          poetry run spacy download en_core_web_sm
+
+      - name: Run linting
+        run: poetry run black app
+        continue-on-error: true
+
+
+      - name: Run type checks
+        run: poetry run mypy .
+        continue-on-error: true
+
+      - name: Run security checks
+        run: poetry run bandit -r app
+        continue-on-error: true
+
+      - name: Run tests
+        run: |
+          pip install genbadge defusedxml
+          export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+          poetry run coverage run -m pytest
+          poetry run coverage report -m
+          poetry run pytest --cov=app --cov-report=xml --cov-report=html
+          genbadge coverage -o .github/badge/coverage.svg -i coverage.xml
+
+      - name: Codecov report
+        uses: codecov/codecov-action@v3
+        with:
+          files: "coverage.xml"
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Build docs
+        run: poetry run sphinx-build -b html docs/source docs/build
+        continue-on-error: true
+
+      - name: Run app (briefly)
+        run: |
+          poetry run uvicorn app.main:app --reload --port 8000 &
+          sleep 5 &&
+          kill $!
